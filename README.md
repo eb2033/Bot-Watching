@@ -1,4 +1,8 @@
 # Bot-Watching
+![Python](https://img.shields.io/badge/Python-3776AB?style=flat&logo=python&logoColor=white)
+![YAML](https://img.shields.io/badge/YAML-CB171E?style=flat&logo=yaml&logoColor=white)  
+![Docker](https://img.shields.io/badge/docker-%230db7ed.svg?style=for-the-badge&logo=docker&logoColor=white)
+![Grafana](https://img.shields.io/badge/grafana-%23F46800.svg?style=for-the-badge&logo=grafana&logoColor=white)
 
 Have you ever wondered how those automated scanning bots work over the web? Now you can throw out some bait and watch what they do in (almost) real time.
 
@@ -30,6 +34,9 @@ Grafana  — dashboards over a read-only DB role
 - **engine/** — parses Cowrie's JSON event types, runs detection rules, enriches source IPs, writes normalized rows to Postgres.
 - **PostgreSQL** — normalized storage; Grafana connects through a dedicated, `SELECT`-only role rather than the engine's own credentials.
 - **Grafana** — the current visualization layer, run via Docker Compose alongside the DB.
+
+### DEMO Video of Grafana Dashboard
+Will be Added once AWS deployment is functional
 
 ### Current state
 
@@ -177,3 +184,7 @@ Basic heuristics live in `engine/filters/rules.py`: known-bad credential matchin
 ## License
 
 N/A yet
+
+## AI Disclaimer
+The component selection, design, engine core implementation and infrastructure files were written by hand.  
+Claude's Sonnet 5 model was used to generate the sample log script, summarise dev logs into a README and generate the test suite.
