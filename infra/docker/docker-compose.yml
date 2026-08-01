@@ -78,19 +78,6 @@ services:
       - db
     networks:
       - honeypot-net
-  # dashboard:
-  #   build:
-  #     context: ../..
-  #     dockerfile: infra/docker/dashboard.Dockerfile
-  #   env_file: ../../.env
-  #   environment:
-  #     DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/honeypot
-  #   ports:
-  #     - "5000:5000"
-  #   depends_on:
-  #     - db
-  #   networks:
-  #     - honeypot-net
 
 volumes:
   pgdata:
