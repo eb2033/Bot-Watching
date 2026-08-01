@@ -37,6 +37,7 @@ Grafana  — dashboards over a read-only DB role
 - The target ingestion path is Cowrie → S3 → SQS → engine. That's not wired up yet. Today, [engine/listener.py](engine/listener.py) reads Cowrie JSON lines directly from a local file (`COWRIE_LOG_PATH`, batched via `LISTENER_BATCH_SIZE`) to emulate SQS polling locally — see [engine/main.py](engine/main.py).
 - IP enrichment (`engine/enrichment/enrichment.py`) looks up `country`/`city`/`asn`/`org` (and now real `latitude`/`longitude`) per source IP via GeoLite2, caching results in the `ip_enrichment` table so each IP is only looked up once.
 - **Grafana is the visualization layer.** `infra/docker/docker-compose.yml` runs a `grafana` service alongside Postgres, with SSL between them and a least-privilege `SELECT`-only DB role created for it (`infra/docker/init-scripts/create-grafana-user.sh`). The earlier home-built Flask + Plotly + Mapbox dashboard has been retired in favor of it.
+- The Postgres datasource is auto-provisioned via `infra/docker/grafana/provisioning/datasources/datasource.yml` (classic file-based provisioning, still supported). The dashboard itself is **not**: this Grafana version (13.1.1) only exports/stores dashboards in a newer schema (`dashboard.grafana.app/v2`) that the classic file provisioner explicitly rejects. Instead, a one-shot `grafana-provision` Compose service (`infra/docker/grafana/provision-dashboard.sh`) waits for Grafana to come up and pushes `infra/docker/grafana/dashboards/honeypot-dash.json` to that v2 API directly, authenticating with a Grafana **service account token** (`GRAFANA_SA_TOKEN`, see [Environment variables](#environment-variables)). It's idempotent — create on a fresh instance, update on an existing one.
 - `scripts/seed_sample_traffic.py` writes synthetic Cowrie JSONL with real, GeoLite2-resolvable public IPs across all continents straight into `COWRIE_LOG_PATH`, so the pipeline can be exercised end-to-end without waiting on real attacker traffic — genuine local/private-range traffic never resolves to a location, so this is the only way to get geolocatable data locally. (An earlier idea to drive real brute-force traffic via a dedicated `attacker` container is retired; `infra/docker/attacker.Dockerfile` still exists on disk but isn't part of the Compose stack.)
 
 ## Repository Structure
@@ -60,6 +61,10 @@ scripts/
 infra/
 ├── docker/                   # engine.Dockerfile, db.Dockerfile, docker-compose.yml
 │                              # Postgres SSL certs, Grafana DB-user init script
+│   └── grafana/
+│       ├── provisioning/datasources/   # datasource.yml — auto-provisioned Postgres connection
+│       ├── dashboards/                  # honeypot-dash.json — checked-in dashboard source of truth
+│       └── provision-dashboard.sh       # pushes the dashboard JSON to Grafana's v2 API on startup
 └── cowrie/                   # cowrie.cfg.example, EC2/S3/SQS notes for the target deployment
 ```
 
@@ -86,10 +91,18 @@ AWS (EC2/S3/SQS) is only required once the target ingestion path is implemented 
 2. **Bring up the local stack** (Postgres, Cowrie, engine, and Grafana)
 
    ```bash
-   docker compose -f infra/docker/docker-compose.yml up
+   docker compose -f infra/docker/docker-compose.yml up -d
    ```
 
-3. **View dashboards in Grafana** at `http://localhost:3000` (default admin credentials come from `GF_SECURITY_ADMIN_USER` / `GF_SECURITY_ADMIN_PASSWORD` in `infra/docker/.env`). Grafana connects to Postgres over SSL using the read-only role provisioned by `create-grafana-user.sh`.
+   The Postgres datasource provisions itself automatically. The dashboard won't yet — `GRAFANA_SA_TOKEN` is blank on a fresh clone, so the one-shot `grafana-provision` service will fail harmlessly (exits non-zero, doesn't crash-loop). That's expected; the next step fixes it.
+
+3. **One-time: create a Grafana service account token, then let the dashboard provision itself.** Log into `http://localhost:3000` (credentials from `GF_SECURITY_ADMIN_USER` / `GF_SECURITY_ADMIN_PASSWORD` in `infra/docker/.env`) → **Administration** → **Users and access** → **Service accounts** → **Add service account** (role: Admin) → **Add service account token**. Put the token in `infra/docker/.env` as `GRAFANA_SA_TOKEN=glsa_...`, then run:
+
+   ```bash
+   docker compose -f infra/docker/docker-compose.yml up -d --force-recreate grafana-provision
+   ```
+
+   From then on (including future `docker compose up`s, as long as `.env` keeps the token), the dashboard stays in sync automatically — no more manual rebuilding after a wiped volume or fresh clone.
 
 4. **Seed realistic, geolocatable traffic** (real local/private-range traffic never resolves to a location, so this script is what gives the pipeline real, geolocatable public IPs to enrich):
 
@@ -126,6 +139,7 @@ GRAFANA_USER=
 GRAFANA_PASSWORD=
 GF_SECURITY_ADMIN_USER=
 GF_SECURITY_ADMIN_PASSWORD=
+GRAFANA_SA_TOKEN=   # Grafana service account token; see Setup step 3 — blank until you create one
 ```
 
 ## Running tests
