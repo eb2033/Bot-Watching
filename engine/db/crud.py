@@ -20,6 +20,8 @@ def enrich_ip(db, event: IPEnrichmentEvent) -> None:
         city=event.city,
         asn=event.asn,
         org=event.org,
+        latitude=event.latitude,
+        longitude=event.longitude,
         enriched_at=event.enriched_at,
     )
     db.add(enrichment_row)

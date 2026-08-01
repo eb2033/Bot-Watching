@@ -6,9 +6,16 @@ import pytest
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 
-from db.crud import insert_alert, insert_auth_attempt, insert_command, insert_download, insert_session
-from db.models import Alert, AuthAttempt, Base, Command, Download, Session
-from parser.schemas import AuthAttemptEvent, CommandEvent, DownloadEvent, SessionConnectEvent, Alert as AlertEvent
+from db.crud import enrich_ip, insert_alert, insert_auth_attempt, insert_command, insert_download, insert_session
+from db.models import Alert, AuthAttempt, Base, Command, Download, IPEnrichment, Session
+from parser.schemas import (
+	AuthAttemptEvent,
+	CommandEvent,
+	DownloadEvent,
+	SessionConnectEvent,
+	Alert as AlertEvent,
+	IPEnrichment as IPEnrichmentEvent,
+)
 
 
 @pytest.fixture()
@@ -91,6 +98,19 @@ def _alert_event() -> AlertEvent:
 	)
 
 
+def _enrichment_event() -> IPEnrichmentEvent:
+	return IPEnrichmentEvent(
+		src_ip="10.0.0.1",
+		country="United States",
+		city="Ashburn",
+		asn="15169",
+		org="Google LLC",
+		latitude=39.0438,
+		longitude=-77.4874,
+		enriched_at=datetime.now(timezone.utc),
+	)
+
+
 def test_insert_session_persists_row(crud_db):
 	row = insert_session(crud_db, _session_event())
 	crud_db.commit()
@@ -152,6 +172,17 @@ def test_insert_alert_persists_row(crud_db):
 	assert saved_row.rule_name == "Suspicious Command"
 	assert saved_row.severity == "High"
 	assert saved_row.details == "Matched suspicious keyword 'passwd' in command: cat /etc/passwd"
+
+
+def test_enrich_ip_persists_coordinates(crud_db):
+	enrich_ip(crud_db, _enrichment_event())
+	crud_db.commit()
+
+	saved_row = crud_db.get(IPEnrichment, "10.0.0.1")
+	assert saved_row is not None
+	assert saved_row.country == "United States"
+	assert saved_row.latitude == 39.0438
+	assert saved_row.longitude == -77.4874
 
 
 def test_insert_helpers_can_be_queried_together(crud_db):

@@ -1,0 +1,20 @@
+__pycache__/
+*.pyc
+.env
+.venv/
+venv/
+*.log
+.DS_Store
+.vscode
+AGENTS.md
+cowrie.json
+CLAUDE.md
+dashboard/prompt.md
+Dev_log.md
+Local Test.md
+skills-lock.json
+.claude/
+.claude/skills/
+.code-review-graph/
+*.key
+*.crt

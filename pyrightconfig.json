@@ -1,0 +1,4 @@
+{
+	"extraPaths": [".", "engine"],
+	"include": ["engine"]
+}

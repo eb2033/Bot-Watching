@@ -11,7 +11,7 @@ def _write_log_file(path, lines: list[dict]) -> None:
 	path.write_text("\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8")
 
 
-def test_listener_reads_five_lines_and_trims_file(tmp_path):
+def test_listener_reads_five_lines_then_advances_to_next_batch(tmp_path):
 	log_path = tmp_path / "cowrie.json"
 	_write_log_file(
 		log_path,
@@ -20,13 +20,36 @@ def test_listener_reads_five_lines_and_trims_file(tmp_path):
 
 	listener = CowrieLogListener(log_path=log_path, batch_size=5)
 	batch = listener.read_batch()
-
 	assert len(batch) == 5
 
 	listener.discard_processed(len(batch))
-	remaining_lines = log_path.read_text(encoding="utf-8").splitlines()
-	assert len(remaining_lines) == 1
-	assert json.loads(remaining_lines[0])["line"] == 5
+
+	# File is untouched; only the listener's read cursor advances.
+	assert len(log_path.read_text(encoding="utf-8").splitlines()) == 6
+	next_batch = listener.read_batch()
+	assert len(next_batch) == 1
+	assert json.loads(next_batch[0])["line"] == 5
+
+
+def test_listener_does_not_lose_lines_appended_after_read_batch(tmp_path):
+	# Guards against reintroducing a truncate-based discard: a writer
+	# appending mid-batch must not be able to lose data.
+	log_path = tmp_path / "cowrie.json"
+	_write_log_file(log_path, [{"eventid": "first", "line": 0}])
+
+	listener = CowrieLogListener(log_path=log_path, batch_size=5)
+	batch = listener.read_batch()
+	assert len(batch) == 1
+
+	# Simulate a concurrent writer appending mid-batch.
+	with log_path.open("a", encoding="utf-8") as f:
+		f.write(json.dumps({"eventid": "second", "line": 1}) + "\n")
+
+	listener.discard_processed(len(batch))
+
+	next_batch = listener.read_batch()
+	assert len(next_batch) == 1
+	assert json.loads(next_batch[0])["line"] == 1
 
 
 def test_parse_cowrie_line_maps_known_event_types():

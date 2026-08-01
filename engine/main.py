@@ -68,6 +68,8 @@ def _store_ip_enrichment(db, src_ip: str) -> None:
 			city=lookup_result["city"],
 			asn=lookup_result["asn"],
 			org=lookup_result["org"],
+			latitude=lookup_result["latitude"],
+			longitude=lookup_result["longitude"],
 			enriched_at=datetime.now(timezone.utc),
 		),
 	)

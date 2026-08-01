@@ -19,4 +19,6 @@ def lookup_ip(src_ip: str) -> dict | None:
         "city": city_resp.city.name,
         "asn": str(asn_resp.autonomous_system_number),
         "org": asn_resp.autonomous_system_organization,
+        "latitude": city_resp.location.latitude,
+        "longitude": city_resp.location.longitude,
     }

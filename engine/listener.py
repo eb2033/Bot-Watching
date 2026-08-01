@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -85,23 +85,37 @@ def parse_cowrie_line(line: str) -> ParsedEvent | None:
 
 @dataclass(slots=True)
 class CowrieLogListener:
+
 	log_path: Path
 	batch_size: int = 5
+	_offset: int = field(default=0, init=False, repr=False)
+	_next_offset: int = field(default=0, init=False, repr=False)
 
 	def read_batch(self) -> list[str]:
 		if not self.log_path.exists():
 			return []
 
-		lines = [line for line in self.log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-		return lines[: self.batch_size]
+		lines: list[str] = []
+		offset = self._offset
+		with self.log_path.open("r", encoding="utf-8") as f:
+			f.seek(offset)
+			while len(lines) < self.batch_size:
+				line = f.readline()
+				if not line.endswith("\n"):
+					# Incomplete line - the writer hasn't flushed the trailing
+					# newline yet. Stop without consuming it; retry the same
+					# offset on the next poll instead of processing a
+					# truncated JSON payload.
+					break
+				offset = f.tell()
+				stripped = line.strip()
+				if stripped:
+					lines.append(stripped)
+
+		self._next_offset = offset
+		return lines
 
 	def discard_processed(self, processed_count: int) -> None:
-		if processed_count <= 0 or not self.log_path.exists():
+		if processed_count <= 0:
 			return
-
-		lines = [line for line in self.log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-		remaining_lines = lines[processed_count:]
-		content = "\n".join(remaining_lines)
-		if content:
-			content += "\n"
-		self.log_path.write_text(content, encoding="utf-8")
+		self._offset = self._next_offset

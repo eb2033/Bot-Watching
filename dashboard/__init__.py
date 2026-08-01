@@ -1,1 +1,0 @@
-"""Honeypot dashboard package."""

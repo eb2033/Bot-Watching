@@ -1,0 +1,98 @@
+#Local Container Stack
+
+#Real Cowrie currently runs here right now for local attack simulation and testing. AWS EC2 deployment will be in the next implementation.
+#The AWS EC2 deployment is the internet-facing production instance; this one is just for the local dev loop.
+
+networks:
+  honeypot-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+
+services:
+  db:
+    build:
+      context: .
+      dockerfile: db.Dockerfile
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      GRAFANA_USER: ${GRAFANA_USER}
+      GRAFANA_PASSWORD: ${GRAFANA_PASSWORD}
+    command: >
+      -c ssl=on
+      -c ssl_cert_file=/var/lib/postgresql/certs/dbServer.crt
+      -c ssl_key_file=/var/lib/postgresql/certs/dbServer.key
+      -c hba_file=/etc/postgresql/config_files/pg_hba.conf
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./init-scripts:/docker-entrypoint-initdb.d
+      - pgdata:/var/lib/postgresql/data
+      - ./config_files/pg_hba.conf:/etc/postgresql/config_files/pg_hba.conf:ro
+    networks:
+      - honeypot-net
+
+  cowrie:
+    image: cowrie/cowrie:latest
+    restart: unless-stopped
+    networks:
+      honeypot-net:
+        ipv4_address: 172.28.0.10
+    ports:
+      - "2222:2222"
+    volumes:
+      - cowrie-var:/cowrie/cowrie-git/var
+
+  engine:
+    build:
+      context: ../..
+      dockerfile: infra/docker/engine.Dockerfile
+    env_file: ../../.env
+    environment:
+      DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/honeypot
+      COWRIE_LOG_PATH: /cowrie-var/log/cowrie/cowrie.json
+      LISTENER_BATCH_SIZE: 5
+      LISTENER_POLL_INTERVAL_SECONDS: 2
+    depends_on:
+      - cowrie
+      - db
+    volumes:
+      - cowrie-var:/cowrie-var
+      - ../../scripts:/app/scripts:ro
+    networks:
+      - honeypot-net
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD}
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-storage:/var/lib/grafana
+    depends_on:
+      - db
+    networks:
+      - honeypot-net
+  # dashboard:
+  #   build:
+  #     context: ../..
+  #     dockerfile: infra/docker/dashboard.Dockerfile
+  #   env_file: ../../.env
+  #   environment:
+  #     DATABASE_URL: postgresql+psycopg2://postgres:postgres@db:5432/honeypot
+  #   ports:
+  #     - "5000:5000"
+  #   depends_on:
+  #     - db
+  #   networks:
+  #     - honeypot-net
+
+volumes:
+  pgdata:
+  cowrie-var:
+  grafana-storage:

@@ -39,5 +39,7 @@ class IPEnrichment(BaseModel):
     city: str | None
     asn: str | None
     org: str | None
+    latitude: float | None
+    longitude: float | None
     enriched_at: datetime
     

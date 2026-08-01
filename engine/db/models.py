@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, event
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, UniqueConstraint, event
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from engine.db.sanitization import sanitize_text
@@ -30,13 +30,15 @@ class Session(Base):
 	alerts: Mapped[list[Alert]] = relationship(back_populates="session", cascade="all, delete-orphan")
  
 class IPEnrichment(Base):
-    __tablename__ = "ip_enrichment"
-    src_ip: Mapped[str] = mapped_column(String(45), primary_key=True)
-    country: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    city: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    asn: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    org: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    enriched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+	__tablename__ = "ip_enrichment"
+	src_ip: Mapped[str] = mapped_column(String(45), primary_key=True)
+	country: Mapped[str | None] = mapped_column(String(64), nullable=True)
+	city: Mapped[str | None] = mapped_column(String(128), nullable=True)
+	asn: Mapped[str | None] = mapped_column(String(64), nullable=True)
+	org: Mapped[str | None] = mapped_column(String(255), nullable=True)
+	latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+	longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+	enriched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class AuthAttempt(Base):
