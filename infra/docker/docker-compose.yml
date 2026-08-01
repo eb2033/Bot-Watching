@@ -70,12 +70,29 @@ services:
     environment:
       GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER}
       GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      GRAFANA_USER: ${GRAFANA_USER}
+      GRAFANA_PASSWORD: ${GRAFANA_PASSWORD}
     ports:
       - "3000:3000"
     volumes:
       - grafana-storage:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
     depends_on:
       - db
+    networks:
+      - honeypot-net
+
+  grafana-provision:
+    image: curlimages/curl:latest
+    environment:
+      GRAFANA_SA_TOKEN: ${GRAFANA_SA_TOKEN}
+    volumes:
+      - ./grafana/dashboards:/dashboards:ro
+      - ./grafana/provision-dashboard.sh:/provision-dashboard.sh:ro
+    entrypoint: ["/bin/sh", "/provision-dashboard.sh"]
+    depends_on:
+      - grafana
     networks:
       - honeypot-net
 

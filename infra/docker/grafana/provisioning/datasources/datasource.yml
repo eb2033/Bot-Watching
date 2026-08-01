@@ -1,0 +1,18 @@
+apiVersion: 1
+
+datasources:
+  - name: Honeypot Postgres
+    uid: honeypot-postgres
+    type: postgres
+    access: proxy
+    url: db:5432
+    database: ${POSTGRES_DB}
+    user: ${GRAFANA_USER}
+    isDefault: true
+    editable: false
+    jsonData:
+      sslmode: require
+      postgresVersion: 1600
+      timescaledb: false
+    secureJsonData:
+      password: ${GRAFANA_PASSWORD}
