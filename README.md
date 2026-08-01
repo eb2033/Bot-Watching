@@ -163,3 +163,7 @@ Basic heuristics live in `engine/filters/rules.py`: known-bad credential matchin
 ## License
 
 N/A yet
+
+## AI Disclaimer
+The component selection, design, engine core implementation and infrastructure files were written by hand.  
+Claude's Sonnet 5 model was used to generate the sample log script, summarise dev logs into a README and generate the test suite.
