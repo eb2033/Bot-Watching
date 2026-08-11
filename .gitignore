@@ -18,3 +18,4 @@ skills-lock.json
 .code-review-graph/
 *.key
 *.crt
+*.mmdb
