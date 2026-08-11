@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import time
@@ -41,6 +42,8 @@ from engine.parser.schemas import (
 	SessionConnectEvent,
 	IPEnrichment as IPEnrichmentEvent,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _build_placeholder_session(event: ParsedEvent):
@@ -137,6 +140,7 @@ class EngineRuntime:
 	listener: CowrieLogListener
 	processor: EngineProcessor = field(default_factory=EngineProcessor)
 	poll_interval_seconds: float = 2.0
+	max_backoff_seconds: float = 60.0
 
 	def process_next_batch(self) -> int:
 		raw_lines = self.listener.read_batch()
@@ -154,8 +158,31 @@ class EngineRuntime:
 		return len(raw_lines)
 
 	def run_forever(self) -> None:
+		consecutive_failures = 0
+
 		while True:
-			processed_count = self.process_next_batch()
+			try:
+				processed_count = self.process_next_batch()
+			except Exception:
+				# Transient infrastructure faults (DB failover, connection
+				# drop, network blip)
+				consecutive_failures += 1
+				backoff_seconds = min(
+					self.poll_interval_seconds * (2 ** (consecutive_failures - 1)),
+					self.max_backoff_seconds,
+				)
+				logger.exception(
+					"Batch failed (consecutive failures: %d), retrying in %.1fs",
+					consecutive_failures,
+					backoff_seconds,
+				)
+				time.sleep(backoff_seconds)
+				continue
+
+			if consecutive_failures:
+				logger.info("Recovered after %d consecutive failure(s)", consecutive_failures)
+			consecutive_failures = 0
+
 			if processed_count == 0:
 				time.sleep(self.poll_interval_seconds)
 
@@ -173,11 +200,17 @@ def _get_poll_interval() -> float:
 
 
 def main() -> None:
+	logging.basicConfig(
+		level=os.getenv("LOG_LEVEL", "INFO").upper(),
+		format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+	)
+
 	Base.metadata.create_all(get_engine())
 	runtime = EngineRuntime(
 		listener=CowrieLogListener(log_path=_get_log_path(), batch_size=_get_batch_size()),
 		poll_interval_seconds=_get_poll_interval(),
 	)
+	logger.info("Engine started, polling %s", _get_log_path())
 	runtime.run_forever()
 
 

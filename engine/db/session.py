@@ -21,7 +21,12 @@ def get_engine():
     global engine, SessionLocal
     database_url = _get_database_url()
     if engine is None or str(engine.url) != database_url:
-        engine = create_engine(database_url, echo=True, future=True)
+        # SQLALCHEMY_DEBUG is opt-in for local debugging only: echo=True logs
+        # every statement with its bound parameters, and this pipeline inserts
+        # attacker-supplied usernames/passwords - so leaving it on writes
+        # captured credentials into container logs and any cloud aggregator
+        # downstream.
+        engine = create_engine(database_url, echo=os.getenv("SQLALCHEMY_DEBUG") == "1", future=True)
         SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
     return engine
 

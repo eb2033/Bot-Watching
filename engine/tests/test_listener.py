@@ -52,6 +52,73 @@ def test_listener_does_not_lose_lines_appended_after_read_batch(tmp_path):
 	assert json.loads(next_batch[0])["line"] == 1
 
 
+def test_listener_resumes_after_log_rotation(tmp_path):
+	# Cowrie rotates cowrie.json (rename away, recreate) in any long-running
+	# deployment. The stored byte offset then points past the end of the new,
+	# smaller file - without rotation detection every later poll silently
+	# returns nothing and ingestion stops for good.
+	log_path = tmp_path / "cowrie.json"
+	_write_log_file(log_path, [{"eventid": "old", "line": index} for index in range(6)])
+
+	listener = CowrieLogListener(log_path=log_path, batch_size=5)
+	listener.discard_processed(len(listener.read_batch()))
+	listener.discard_processed(len(listener.read_batch()))
+
+	log_path.rename(tmp_path / "cowrie.json.1")
+	_write_log_file(log_path, [{"eventid": "new", "line": index} for index in range(3)])
+
+	batch = listener.read_batch()
+	listener.discard_processed(len(batch))
+
+	assert [json.loads(line)["line"] for line in batch] == [0, 1, 2]
+	assert all(json.loads(line)["eventid"] == "new" for line in batch)
+
+
+def test_listener_resumes_after_log_truncated_in_place(tmp_path):
+	log_path = tmp_path / "cowrie.json"
+	_write_log_file(log_path, [{"eventid": "old", "line": index} for index in range(6)])
+
+	listener = CowrieLogListener(log_path=log_path, batch_size=5)
+	listener.discard_processed(len(listener.read_batch()))
+	listener.discard_processed(len(listener.read_batch()))
+
+	# Truncate + rewrite in place: same inode, smaller than the stored offset.
+	_write_log_file(log_path, [{"eventid": "fresh", "line": 99}])
+
+	batch = listener.read_batch()
+
+	assert len(batch) == 1
+	assert json.loads(batch[0])["line"] == 99
+
+
+def test_listener_ignores_missing_log_file(tmp_path):
+	listener = CowrieLogListener(log_path=tmp_path / "does-not-exist.json", batch_size=5)
+
+	assert listener.read_batch() == []
+
+
+def test_parse_cowrie_line_skips_malformed_events():
+	# A known eventid missing fields its builder requires must not raise:
+	# run_forever retries failed batches, so one bad line would otherwise
+	# stall ingestion permanently instead of crashing loudly.
+	missing_field = parse_cowrie_line(
+		json.dumps(
+			{
+				"eventid": "cowrie.session.connect",
+				"session": "sess-bad",
+				"timestamp": "2026-07-08T22:40:38.158655Z",
+				"src_ip": "10.10.10.20",
+				"protocol": "ssh",
+			}
+		)
+	)
+	assert missing_field is None
+
+	assert parse_cowrie_line("12345") is None
+	assert parse_cowrie_line('"a string"') is None
+	assert parse_cowrie_line("not json at all") is None
+
+
 def test_parse_cowrie_line_maps_known_event_types():
 	parsed = parse_cowrie_line(
 		json.dumps(
