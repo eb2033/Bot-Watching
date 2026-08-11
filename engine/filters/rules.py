@@ -1,7 +1,8 @@
 from engine.config import USERNAMES_PATH, PASSWORDS_PATH
 from engine.parser.schemas import AuthAttemptEvent, CommandEvent, DownloadEvent, Alert
 from pathlib import Path
-from collections import defaultdict
+from collections import defaultdict, deque
+from datetime import datetime, timedelta
 
 def _load_wordlist(file_path: Path) -> set[str]:
     if not file_path.exists():
@@ -40,28 +41,71 @@ def check_bad_creds(event:AuthAttemptEvent) -> Alert | None:
             details=f"Attempted login with bad credentials: username={event.username}, password={event.password}"
         )
         
-class BruteForceDetector:
-    def __init__(self, threshold: int = 5):
-        self.threshold = threshold
-        self._fail_counts: dict[str,int] = defaultdict(int)
+BRUTE_FORCE_WINDOW_SECONDS = 600
 
-    def check(self,event:AuthAttemptEvent) -> Alert | None:
+
+class BruteForceDetector:
+    """Flags `threshold` failed logins from one source IP within `window_seconds`.
+
+    Only the last `threshold` failure times per IP are retained - that's all
+    that's needed to decide whether the threshold was reached inside the window.
+
+    Times come from the events themselves, never the wall clock, so replaying
+    an older log (which the listener does after a restart or a log rotation)
+    windows against the timestamps in that log rather than "now".
+    """
+
+    def __init__(self, threshold: int = 5, window_seconds: float = BRUTE_FORCE_WINDOW_SECONDS):
+        self.threshold = threshold
+        self.window = timedelta(seconds=window_seconds)
+        self._failures: dict[str, deque[datetime]] = defaultdict(lambda: deque(maxlen=threshold))
+        self._last_sweep: datetime | None = None
+
+    def _sweep_expired(self, now: datetime) -> None:
+        """Drop IPs whose most recent failure has aged out of the window."""
+        cutoff = now - self.window
+        stale = [src_ip for src_ip, times in self._failures.items() if not times or times[-1] < cutoff]
+        for src_ip in stale:
+            del self._failures[src_ip]
+        self._last_sweep = now
+
+    def check(self, event: AuthAttemptEvent) -> Alert | None:
+        now = event.timestamp
+
+        # Amortised cleanup: at most one full pass per window, so the cost is
+        # negligible next to the per-event work.
+        if self._last_sweep is None:
+            self._last_sweep = now
+        elif now - self._last_sweep >= self.window:
+            self._sweep_expired(now)
+
         if event.success:
-            self._fail_counts[event.src_ip] = 0  # Reset on success
+            self._failures.pop(event.src_ip, None)  # Reset on success
             return None
-        else:
-            self._fail_counts[event.src_ip] += 1
-            if self._fail_counts[event.src_ip] % self.threshold == 0:
-                return Alert(
-                    session_id=event.session_id,
-                    eventid=event.eventid,
-                    timestamp=event.timestamp,
-                    src_ip=event.src_ip,
-                    raw=event.raw,
-                    rule_name="Brute Force Attack",
-                    severity="High",
-                    details=f"Detected {self._fail_counts[event.src_ip]} failed login attempts from {event.src_ip}"
-                )
+
+        failures = self._failures[event.src_ip]
+        failures.append(now)
+
+        if len(failures) < self.threshold or now - failures[0] > self.window:
+            return None
+
+        # Consume the run so a sustained attack alerts once per `threshold`
+        # failures, rather than on every failure once the threshold is passed.
+        del self._failures[event.src_ip]
+
+        return Alert(
+            session_id=event.session_id,
+            eventid=event.eventid,
+            timestamp=event.timestamp,
+            src_ip=event.src_ip,
+            raw=event.raw,
+            rule_name="Brute Force Attack",
+            severity="High",
+            details=(
+                f"Detected {self.threshold} failed login attempts from {event.src_ip} "
+                f"within {int(self.window.total_seconds())}s"
+            )
+        )
         
 _SUSPICIOUS_KEYWORDS = ["rm -rf", "wget", "curl", "nc", "netcat", "python -c", "perl -e","busybox","/bin/sh","/bin/bash","chmod","/etc/passwd"]
 
