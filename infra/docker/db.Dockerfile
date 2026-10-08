@@ -1,4 +1,4 @@
-FROM postgres:16
+FROM postgres:16.15
 
 COPY certs/dbServer.crt /var/lib/postgresql/certs/dbServer.crt
 COPY certs/dbServer.key /var/lib/postgresql/certs/dbServer.key

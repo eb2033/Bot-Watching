@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -24,7 +25,8 @@ from engine.db.crud import (
 	insert_session,
 	enrich_ip,
 )
-from engine.db.models import Base, Session as SessionRow, IPEnrichment as IPEnrichmentRow
+from engine.db.migrate import upgrade_to_head
+from engine.db.models import Session as SessionRow, IPEnrichment as IPEnrichmentRow
 from engine.db.session import get_db_session, get_engine
 from engine.enrichment.enrichment import lookup_ip
 from engine.filters.rules import (
@@ -33,6 +35,7 @@ from engine.filters.rules import (
 	check_command_input,
 	check_file_download,
 )
+from engine.healthcheck import HEARTBEAT_PATH
 from engine.listener import CowrieLogListener, ParsedEvent, parse_cowrie_line
 from engine.parser.schemas import (
 	Alert,
@@ -141,10 +144,15 @@ class EngineRuntime:
 	processor: EngineProcessor = field(default_factory=EngineProcessor)
 	poll_interval_seconds: float = 2.0
 	max_backoff_seconds: float = 60.0
+	heartbeat_path: Path | None = None
 
 	def process_next_batch(self) -> int:
 		raw_lines = self.listener.read_batch()
 		if not raw_lines:
+			# Nothing to write, but still prove the DB is reachable so an idle
+			# engine with a dead database doesn't keep reporting healthy.
+			with get_engine().connect() as connection:
+				connection.execute(text("SELECT 1"))
 			return 0
 
 		with get_db_session() as db:
@@ -156,6 +164,10 @@ class EngineRuntime:
 
 		self.listener.discard_processed(len(raw_lines))
 		return len(raw_lines)
+
+	def _record_heartbeat(self) -> None:
+		if self.heartbeat_path is not None:
+			self.heartbeat_path.touch()
 
 	def run_forever(self) -> None:
 		consecutive_failures = 0
@@ -182,6 +194,7 @@ class EngineRuntime:
 			if consecutive_failures:
 				logger.info("Recovered after %d consecutive failure(s)", consecutive_failures)
 			consecutive_failures = 0
+			self._record_heartbeat()
 
 			if processed_count == 0:
 				time.sleep(self.poll_interval_seconds)
@@ -205,10 +218,11 @@ def main() -> None:
 		format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 	)
 
-	Base.metadata.create_all(get_engine())
+	upgrade_to_head(get_engine())
 	runtime = EngineRuntime(
 		listener=CowrieLogListener(log_path=_get_log_path(), batch_size=_get_batch_size()),
 		poll_interval_seconds=_get_poll_interval(),
+		heartbeat_path=HEARTBEAT_PATH,
 	)
 	logger.info("Engine started, polling %s", _get_log_path())
 	runtime.run_forever()

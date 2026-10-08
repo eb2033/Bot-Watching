@@ -1,0 +1,19 @@
+# Disclaimer
+ The core engine files /parser , /filters , /enrichment and /db were handwritten by me and reviewed using Claude's Opus 5 model.
+
+ # AI use and justification
+  The planning of libraries and design for the dashboard was done by me but the implmentation was done by Claude.
+ I offloaded the coding for the web dashboard to Claude because i have very little exposure to writing frontend code beyond a volunteer project done in college.
+ 
+ The core focus of the project is the python engine , the storage of logs in their sanitised and enriched form and later the secure transfer of data from cloud to local. 
+ The web dashboard lets me visualise the stored data and get some practice with setting up REST API's using Python.
+
+ The web dashboard is a interesting but time consuming endeavour i wont lie. It would have been more efficient maybe if i understood how to properly prompt for UI design and implementation. Would need to look at some skills for this*
+
+ ---- Break -----
+
+ Web dashboard idea was scrapped in favor of Grafana because it would take too long to be happy with how the dashboard looked and worked so i settled for Grafana. It has alot of the stuff i wanted like a log viewer, log highlight, map for the geolocation mapping and log rate visual.
+
+ I had AI write some dockerfiles for easier deployment onto AWS down the line and some final code scans and bugfixes because this project had grown to a size where i couldnt reasonably finish it within the time frame i set because of real life (many such cases)
+ 
+ 

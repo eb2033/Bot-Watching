@@ -1,0 +1,29 @@
+# Patterns here are matched from the context root only - unlike .gitignore,
+# a bare `*.mmdb` would NOT match engine/enrichment/data/*.mmdb. Use **/.
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+.git/
+.venv/
+venv/
+node_modules/
+**/*.log
+**/.DS_Store
+.vscode/
+.claude/
+.code-review-graph/
+
+# Secrets: never send to the build daemon.
+**/.env
+**/*.key
+**/*.crt
+
+# GeoLite2 databases (MaxMind license, ~75MB) are mounted at runtime instead.
+**/*.mmdb
+
+cowrie.json
+LocalTest Photos/
+Dev_log.md
+Local Test.md
+Ai_log
+TODO

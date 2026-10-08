@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "code-review-graph": {
+      "command": "/mnt/c/Users/egorb/Documents/112-SomeWork/Honeypot_Project/.venv/bin/python3",
+      "args": [
+        "-m",
+        "code_review_graph",
+        "serve"
+      ],
+      "cwd": "/mnt/c/Users/egorb/Documents/112-SomeWork/Honeypot_Project",
+      "type": "stdio"
+    }
+  }
+}

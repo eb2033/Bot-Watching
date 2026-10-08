@@ -1,0 +1,36 @@
+Status as of 2026-10-07 (pre-AWS hardening pass)
+
+DONE
+7. Exposure + pinning.
+   - Postgres (5432) and Grafana (3000) published on 127.0.0.1 only; Cowrie 2222 stays public (it's the bait).
+   - pg_hba.conf: hostssl from the compose subnet 172.28.0.0/16 only (was 0.0.0.0/0 and ::/0).
+   - Grafana stays plain HTTP but is loopback-only: on EC2 reach it via SSH tunnel / SSM port forward
+     (ssh -L 3000:127.0.0.1:3000 <host>). Revisit only if Grafana must be public -> ALB + ACM cert in front.
+   - Images pinned by tag+digest: cowrie 3.0.15, grafana 13.1.7 (patch of the tested 13.1.1), curl 8.22.0;
+     base images postgres:16.15, python:3.12.15-slim. engine/requirements.txt pinned with == (direct deps only).
+8. Logging / healthchecks / migrations.
+   - Logging: main.py configures `logging` from LOG_LEVEL; SQL echo is opt-in via SQLALCHEMY_DEBUG=1.
+   - Healthchecks on db (pg_isready), cowrie (TCP probe), grafana (/api/health), engine (heartbeat file,
+     engine/healthcheck.py, defined in engine.Dockerfile). depends_on waits for healthy db/grafana.
+   - restart: unless-stopped on db, cowrie, engine, grafana.
+   - Alembic: engine/migrations (0001 baseline, 0002 lat/lon). Engine runs upgrade_to_head() on startup;
+     pre-Alembic databases are detected and stamped (0001 if lat/lon missing, so they get added).
+9. Engine runs as non-root (uid 1000). Side effect: run the seeder as `exec -u 999 engine ...`.
+Dead config: .env.example cleaned (POLL_INTERVAL_SECONDS removed, LOG_LEVEL now real, AWS vars commented out).
+Docs: infra/cowrie/ and aws/ references removed from README / CLAUDE.md / AGENTS.md.
+.dockerignore: uses **/ patterns; excludes **/*.mmdb, **/.env, **/*.key, **/*.crt. GeoLite2 files are
+  bind-mounted from engine/enrichment/data at runtime (on EC2: populate with geoipupdate before starting).
+
+STILL OPEN (needs you)
+- Root .env still contains static AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY: deactivate them in IAM and delete
+  the lines; use an EC2 instance role instead. Revoke the old Mapbox token in the Mapbox account if not done.
+- Root .env still has POLL_INTERVAL_SECONDS (dead) - rename to LISTENER_POLL_INTERVAL_SECONDS or delete.
+- The empty aws/ directory can be deleted.
+- Grafana admin password in the existing grafana-storage volume differs from GF_SECURITY_ADMIN_PASSWORD
+  (env var only applies on first boot) - keep them in sync or note it.
+- Engine connects as the postgres superuser. Consider a dedicated owner role for the honeypot schema.
+- requirements.txt pins direct deps only; transitive deps still float (use pip-compile/uv lock for a full lock).
+
+Minor / known trade-offs (unchanged, by design)
+- BruteForceDetector counts live in process memory: lost on restart and per-replica. Fine for a single engine;
+  restart recovery is decent because the listener replays the log and alert unique constraints dedup.

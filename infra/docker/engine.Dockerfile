@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.12.15-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -24,5 +24,9 @@ RUN set -eux; \
 			--no-create-home --shell /usr/sbin/nologin engine; \
 	fi
 USER ${ENGINE_UID}:${ENGINE_GID}
+
+# The engine touches /tmp/engine-heartbeat after every successful poll; stale = unhealthy.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+	CMD ["python", "-m", "engine.healthcheck"]
 
 CMD ["python", "-m", "engine.main"]

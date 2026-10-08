@@ -24,6 +24,8 @@ TEST_FILES = [
     (TEST_DIR / "test_db_session.py", "Database session tests"),
     (TEST_DIR / "test_crud.py", "CRUD tests"),
     (TEST_DIR / "test_listener.py", "Listener tests"),
+    (TEST_DIR / "test_migrations.py", "Migration tests"),
+    (TEST_DIR / "test_healthcheck.py", "Healthcheck tests"),
 ]
 
 

@@ -44,7 +44,7 @@ Will be Added once AWS deployment is functional
 - The target ingestion path is Cowrie → S3 → SQS → engine. That's not wired up yet. Today, [engine/listener.py](engine/listener.py) reads Cowrie JSON lines directly from a local file (`COWRIE_LOG_PATH`, batched via `LISTENER_BATCH_SIZE`) to emulate SQS polling locally — see [engine/main.py](engine/main.py).
 - IP enrichment (`engine/enrichment/enrichment.py`) looks up `country`/`city`/`asn`/`org` (and now real `latitude`/`longitude`) per source IP via GeoLite2, caching results in the `ip_enrichment` table so each IP is only looked up once.
 - **Grafana is the visualization layer.** `infra/docker/docker-compose.yml` runs a `grafana` service alongside Postgres, with SSL between them and a least-privilege `SELECT`-only DB role created for it (`infra/docker/init-scripts/create-grafana-user.sh`). The earlier home-built Flask + Plotly + Mapbox dashboard has been retired in favor of it.
-- The Postgres datasource is auto-provisioned via `infra/docker/grafana/provisioning/datasources/datasource.yml` (classic file-based provisioning, still supported). The dashboard itself is **not**: this Grafana version (13.1.1) only exports/stores dashboards in a newer schema (`dashboard.grafana.app/v2`) that the classic file provisioner explicitly rejects. Instead, a one-shot `grafana-provision` Compose service (`infra/docker/grafana/provision-dashboard.sh`) waits for Grafana to come up and pushes `infra/docker/grafana/dashboards/honeypot-dash.json` to that v2 API directly, authenticating with a Grafana **service account token** (`GRAFANA_SA_TOKEN`, see [Environment variables](#environment-variables)). It's idempotent — create on a fresh instance, update on an existing one.
+- The Postgres datasource is auto-provisioned via `infra/docker/grafana/provisioning/datasources/datasource.yml` (classic file-based provisioning, still supported). The dashboard itself is **not**: this Grafana version (13.1.x; the compose file pins 13.1.7) only exports/stores dashboards in a newer schema (`dashboard.grafana.app/v2`) that the classic file provisioner explicitly rejects. Instead, a one-shot `grafana-provision` Compose service (`infra/docker/grafana/provision-dashboard.sh`) waits for Grafana to come up and pushes `infra/docker/grafana/dashboards/honeypot-dash.json` to that v2 API directly, authenticating with a Grafana **service account token** (`GRAFANA_SA_TOKEN`, see [Environment variables](#environment-variables)). It's idempotent — create on a fresh instance, update on an existing one.
 - `scripts/seed_sample_traffic.py` writes synthetic Cowrie JSONL with real, GeoLite2-resolvable public IPs across all continents straight into `COWRIE_LOG_PATH`, so the pipeline can be exercised end-to-end without waiting on real attacker traffic — genuine local/private-range traffic never resolves to a location, so this is the only way to get geolocatable data locally. (An earlier idea to drive real brute-force traffic via a dedicated `attacker` container is retired; `infra/docker/attacker.Dockerfile` still exists on disk but isn't part of the Compose stack.)
 
 ## Repository Structure
@@ -59,7 +59,10 @@ engine/                     # Python: log ingestion -> parsing -> filtering -> e
 │   └── data/                   # GeoLite2-City.mmdb / GeoLite2-ASN.mmdb
 ├── filters/                  # bad-creds, brute-force, command, download-severity rules
 │   └── wordlists/              # usernames.txt, PasswordTop1000.txt (SecLists)
-├── db/                        # SQLAlchemy models, sanitization, session, CRUD
+├── db/                        # SQLAlchemy models, sanitization, session, CRUD, migrate.py
+├── migrations/               # Alembic revisions (applied automatically on engine startup)
+├── alembic.ini               # Alembic CLI config, for authoring new revisions
+├── healthcheck.py            # container healthcheck (heartbeat-file freshness)
 └── tests/                    # pytest suite
 
 scripts/
@@ -72,7 +75,6 @@ infra/
 │       ├── provisioning/datasources/   # datasource.yml — auto-provisioned Postgres connection
 │       ├── dashboards/                  # honeypot-dash.json — checked-in dashboard source of truth
 │       └── provision-dashboard.sh       # pushes the dashboard JSON to Grafana's v2 API on startup
-└── cowrie/                   # cowrie.cfg.example, EC2/S3/SQS notes for the target deployment
 ```
 
 ## Prerequisites
@@ -114,6 +116,11 @@ AWS (EC2/S3/SQS) is only required once the target ingestion path is implemented 
 4. **Seed realistic, geolocatable traffic** (real local/private-range traffic never resolves to a location, so this script is what gives the pipeline real, geolocatable public IPs to enrich):
 
    ```bash
+   # Against the Compose stack: run inside the engine container as Cowrie's uid (999),
+   # since the engine itself runs as a non-root user that can't write Cowrie's log.
+   docker compose -f infra/docker/docker-compose.yml exec -u 999 engine python scripts/seed_sample_traffic.py
+
+   # Against an engine running outside Docker:
    python scripts/seed_sample_traffic.py [--log-path ...]
    ```
 
@@ -125,16 +132,32 @@ AWS (EC2/S3/SQS) is only required once the target ingestion path is implemented 
    python -m engine.main   # reads COWRIE_LOG_PATH, defaults to /var/log/cowrie/cowrie.json
    ```
 
+## Database schema & migrations
+
+The schema is managed by [Alembic](https://alembic.sqlalchemy.org/) (`engine/migrations/`). The engine runs `upgrade head` on every startup ([engine/db/migrate.py](engine/db/migrate.py)), so deploying a new version is enough to apply new migrations. A database created before migrations existed (by the old `create_all()`) is detected and stamped at the matching revision, then upgraded — e.g. it gains the `ip_enrichment.latitude`/`longitude` columns.
+
+After changing `engine/db/models.py`, author a revision from the repo root against a database at `head`:
+
+```bash
+alembic -c engine/alembic.ini revision --autogenerate -m "describe the change"
+```
+
+Review the generated file (autogenerate misses some things, e.g. renames), then `cd engine && python -m pytest tests/test_migrations.py` — it fails if migrations and models drift apart.
+
 ## Environment variables
 
-Root `.env` (shared by `engine/`):
+Root `.env` (read by `engine/`; see `.env.example`):
 
 ```
-DATABASE_URL=postgresql+psycopg2://user:password@localhost:5432/honeypot
+DATABASE_URL=postgresql+psycopg2://user:password@localhost:5432/honeypot?sslmode=require
+SQLALCHEMY_DEBUG=0          # 1 logs every SQL statement incl. captured credentials — local debugging only
 COWRIE_LOG_PATH=/var/log/cowrie/cowrie.json
 LISTENER_BATCH_SIZE=5
 LISTENER_POLL_INTERVAL_SECONDS=2
+LOG_LEVEL=INFO
 ```
+
+Under Docker Compose the engine's `DATABASE_URL` is built from `infra/docker/.env` (`POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB`), so `POSTGRES_PASSWORD` must be URL-safe.
 
 `infra/docker/.env` (Compose stack — DB and Grafana credentials):
 
@@ -165,6 +188,10 @@ Basic heuristics live in `engine/filters/rules.py`: known-bad credential matchin
 - Run Cowrie on an isolated subnet/network with no access to production resources.
 - Treat all honeypot-sourced data as untrusted — attacker-supplied strings (usernames, commands, filenames) are sanitized before being persisted (`engine/db/sanitization.py`), but stay defensive with anything rendered downstream.
 - Grafana talks to Postgres over SSL through a dedicated `SELECT`-only role — never the engine's own write credentials.
+- Only Cowrie's port (2222) is published on all interfaces. Postgres (5432) and Grafana (3000) are bound to `127.0.0.1`, and `pg_hba.conf` only accepts SSL connections from the Compose network. On EC2, open only the honeypot port in the security group and reach Grafana via an SSH tunnel or SSM port forward (`ssh -L 3000:127.0.0.1:3000 <host>`), so the plain-HTTP Grafana is never exposed directly.
+- No static AWS keys: on EC2 use an IAM instance role (boto3 picks it up automatically).
+- The engine container runs as a non-root user and processes untrusted input; every service has a healthcheck and restart policy, and all images are pinned by tag + digest.
+- GeoLite2 `.mmdb` files are excluded from the engine image and bind-mounted from `engine/enrichment/data/` at runtime — on EC2, populate that directory with MaxMind's `geoipupdate`.
 - Keep secrets (`.env` files, TLS keys/certs under `infra/docker/certs/`) out of version control.
 
 ## Scope & limitations
